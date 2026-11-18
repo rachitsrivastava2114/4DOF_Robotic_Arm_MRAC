@@ -499,7 +499,8 @@ Special thanks to **Dr. Bharat Verma** (Assistant Professor, ECE, LNMIIT) for hi
 
 ## Authors
 
-- **Mudit Todi**
+**Rachit Srivastava** <br>
+Bachelor of Technology – Electronics & Communication Engineering
 
 ## License
 
