@@ -504,4 +504,4 @@ Bachelor of Technology – Electronics & Communication Engineering
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is developed for academic and educational purposes only.
