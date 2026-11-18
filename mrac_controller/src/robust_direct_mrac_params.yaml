@@ -1,0 +1,101 @@
+# robust_direct_mrac_params.yaml
+# ════════════════════════════════════════════════════════════════════════════
+# Parameters of the MRAC ros2_control controller `mrac_arm_controller`
+# (plugin mrac_controller/MracController, maths in include/mrac_controller/mrac_core.hpp).
+# Passed to the controller by the spawner (--param-file) in my_robot_gz.launch.py.
+#
+# Control law      τ = K̂x·[q; q̇] + K̂r·r − Ŵᵀ·α(q, q̇)
+# Adaptation       s    = sign(b)·BᵀPe        (per joint: p12·e + p22·ė)
+#                  K̂x' = −γ_Kx · s · [q; q̇]ᵀ − σ (K̂x − K̂x_init)
+#                  K̂r' = −γ_Kr · s · rᵀ       − σ (K̂r − K̂r_init)   [executing only]
+#                  Ŵ'  =  γ_W  · α · s         − σ_W (Ŵ − Ŵ_init)
+# Basis α (7)      [1, sin(q2), sin(q2+q3), tanh(q̇1)..tanh(q̇4)]
+#
+# The controller is designed to run at 1 kHz (controller_manager update_rate
+# in my_robot_bringup/config/ros2_controllers.yaml). The gain bounds below
+# keep the light joints (waist, wrist) stable at that rate.
+#
+# Runtime:
+#   ros2 topic pub /mrac/robust_enable std_msgs/msg/Bool "{data: false}"
+#   ros2 service call /mrac_arm_controller/save_weights std_srvs/srv/Trigger
+#   ros2 service call /mrac_arm_controller/load_weights std_srvs/srv/Trigger
+# ════════════════════════════════════════════════════════════════════════════
+
+mrac_arm_controller:
+  ros__parameters:
+
+    joints: [joint1, joint2, joint3, joint4]
+
+    # ── Reference model  G(s) = wn² / (s² + 2·ζ·wn·s + wn²) ───────────────
+    # Am, Bm and P (solution of P·Am + Amᵀ·P = −I) are computed from these.
+    # The trajectory is pre-compensated, so wn does not delay the motion; it
+    # sets how stiffly errors are pulled back onto the reference.
+    wn:   3.0
+    zeta: 0.76
+
+    # sign of the input gain b: +1 when positive torque gives positive acceleration.
+    sign_b: 1.0
+
+    # true  → each joint has its own Kp, Kd, Kr (diagonal entries of the matrices).
+    # false → the full 4×8 K̂x and 4×4 K̂r adapt, including cross-joint terms.
+    decentralized: true
+
+    # ── Adaptation rates, one value per joint ─────────────────────────────
+    # s is weighted by P, so it is roughly 10–20× smaller than the raw error;
+    # that is why these rates are larger than in the old scalar law.
+    gamma_Kx: [200.0, 200.0, 200.0, 200.0]
+    gamma_Kr: [200.0, 200.0, 200.0, 200.0]
+
+    # ── Initial gains, one value per joint ────────────────────────────────
+    # Kp_init, Kd_init multiply q and q̇ (negative = stabilising).
+    # Kr_init multiplies r. Kp_init = −Kr_init gives zero torque at q = r.
+    Kp_init: [-10.0, -15.0, -10.0, -5.0]
+    Kd_init: [ -1.0,  -5.0,  -2.0,  0.0]
+    Kr_init: [ 10.0,  15.0,  10.0,  5.0]
+
+    # Projection bounds, one value per joint: |Kp_i| ≤ Kp_max, |Kd_i| ≤ Kd_max.
+    # A sampled loop is only stable while roughly
+    #     |Kp|·T²/J + |Kd|·T/J < 1     (T = control period, J = joint inertia)
+    # The waist (arm upright, J ≈ 0.012 kg·m²) and the wrist (J ≈ 0.002 kg·m²)
+    # are very light, so their bounds are small. Do not raise Kd_max of
+    # joint1 / joint4 without also raising the control rate.
+    Kp_max: [60.0, 300.0, 150.0, 15.0]
+    Kd_max: [ 5.0,  50.0,  15.0,  0.3]
+    Kr_max: 300.0
+
+    # ── Robust term u_ad = −Ŵᵀ·α(q, q̇) ───────────────────────────────────
+    # Ŵ is 7×4; each joint only uses the basis terms that act on it:
+    #   every joint : constant offset, Coulomb friction tanh(q̇_i)
+    #   joint2      : sin(q2), sin(q2+q3)        (gravity)
+    #   joint3      : sin(q2+q3)                 (gravity)
+    # Viscous friction (∝ q̇) is covered by the velocity gain Kd, so it is
+    # not repeated in the basis.
+    robust_enabled: true
+    gamma_W: [400.0, 400.0, 400.0, 400.0]
+    # Bound on ‖Ŵ[:,i]‖ per joint, sized to the torque each joint can need.
+    W_max: [3.0, 50.0, 30.0, 0.5]
+
+    # ── Leakage (σ-modification) ──────────────────────────────────────────
+    # Pulls the estimates back toward their initial (or loaded) values, not
+    # toward zero. 0.0 disables it; the projection bounds still apply.
+    sigma:   0.0
+    sigma_W: 0.0
+
+    # ── Torque limits [Nm] — must match the URDF effort limits ────────────
+    # Adaptation of a joint pauses while its torque is saturated.
+    tau_limit: [150.0, 150.0, 100.0, 50.0]
+
+    # ── Trajectory goals ──────────────────────────────────────────────────
+    # A goal succeeds once every joint is within goal_tolerance [rad] of the
+    # final point; it is aborted if that takes longer than
+    # goal_time_tolerance [s] after the planned end time.
+    goal_tolerance: 0.05
+    goal_time_tolerance: 5.0
+
+    # Publish the /mrac/* diagnostics every N-th control cycle (10 → 100 Hz).
+    diag_decimation: 10
+
+    # ── Saved weights ─────────────────────────────────────────────────────
+    # Empty weights_file means ~/.ros/mrac_weights.yaml.
+    weights_file: ""
+    load_weights_on_activate: false
